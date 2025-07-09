@@ -1,0 +1,140 @@
+프로젝트명: 인스타그램 DM 자동화 및 답장 수집 시스템 (v2.0)
+1. 목적
+구글 시트에 정의된 타겟 목록을 기반으로 인스타그램 DM을 자동으로 발송하고, 수신된 답장을 수집하여 구글 시트에 체계적으로 업데이트함으로써 반복적인 소통 작업을 자동화하고 관리 효율을 높인다.
+
+2. 주요 기능
+DM 발송 대상 필터링: 구글 시트에서 발송 상태(status)가 'PENDING'인 행만 필터링하여 읽는다.
+
+DM 자동 발송: Playwright를 통해 인스타그램 웹에 접근하여 필터링된 대상에게 지정된 메시지를 발송한다.
+
+발송 결과 및 상태 업데이트: DM 발송 성공, 실패 여부에 따라 구글 시트의 status와 timestamp를 실시간으로 업데이트한다.
+
+DM 답장 자동 수집: 발송 성공(status='SENT') 건에 대해 주기적으로 DM함을 순회하며 답장 유무를 확인한다.
+
+답장 내용 및 상태 기록: 수신된 답장을 구글 시트에 기록하고 status를 'REPLIED'로 변경한다.
+
+3. 구글 시트 데이터 구조
+프로젝트의 모든 상태는 구글 시트를 통해 관리된다.
+
+시트 이름: dm_automation_list
+시트 예시
+
+컬럼명	데이터 타입	설명	예시
+username	String	(필수) 메시지를 받을 상대방의 인스타그램 아이디	example_user
+message	String	(필수) 발송할 메시지 내용	안녕하세요! 좋은 하루 되세요.
+status	String	(자동) 작업의 현재 상태. (PENDING, SENT, REPLIED, FAILED)	PENDING
+sent_timestamp	Datetime	메시지 발송 완료 시간 (ISO 8601 형식)	2025-07-09T15:30:00+09:00
+reply	String	수집된 답장 내용. 실패 시에는 실패 사유 기록.	네, 안녕하세요!
+replied_timestamp	Datetime	답장 수집 완료 시간 (ISO 8601 형식)	2025-07-09T18:45:10+09:00
+
+4. 상세 동작 시나리오
+초기화: 스크립트는 구글 시트 API를 통해 dm_automation_list 시트에 연결한다.
+
+DM 발송 단계:
+
+시트에서 status 컬럼이 'PENDING' 인 모든 행을 가져온다. 대상이 없으면 스크립트를 종료한다.
+
+Playwright를 실행하여 저장된 사용자 로그인 세션으로 브라우저를 연다.
+
+예외 처리: 세션이 만료되었거나 유효하지 않으면, "로그인 세션 만료. 수동 로그인 필요" 메시지를 출력하고 스크립트를 중단한다.
+
+첫 번째 대상(username)에게 DM 발송을 시도한다.
+
+발송 성공 시:
+
+해당 행의 status를 **'SENT'**로 변경한다.
+
+sent_timestamp에 현재 시간을 기록한다.
+
+발송 실패 시:
+
+status를 **'FAILED'**로 변경한다.
+
+reply 컬럼에 실패 원인(예: 'User not found', 'Message blocked', 'Element not found')을 기록한다.
+
+다음 대상 작업을 시작하기 전, 30초에서 60초 사이의 랜덤한 시간을 대기한다.
+
+'PENDING' 상태의 모든 대상에 대해 위 작업을 반복한다. 하루 최대 발송량은 50개로 제한한다.
+
+답장 수집 단계:
+
+모든 발송 작업이 끝난 후, 또는 별도의 스케줄에 따라 답장 수집을 시작한다.
+
+시트에서 status 컬럼이 **'SENT'**인 모든 행을 가져온다.
+
+각 대상의 DM 채팅방에 접근하여, 해당 행의 sent_timestamp 이후에 수신된 새 메시지가 있는지 확인한다.
+
+답장 발견 시:
+
+수신된 모든 새 메시지를 하나의 문자열로 합쳐(줄바꿈 \n 사용) reply 컬럼에 기록한다.
+
+status를 **'REPLIED'**로 변경한다.
+
+replied_timestamp에 현재 시간을 기록한다.
+
+'SENT' 상태의 모든 대상에 대해 위 작업을 반복한다.
+
+5. 기술 스택 및 환경설정
+언어: Python 3.10+
+
+핵심 라이브러리:
+
+playwright: 브라우저 자동화
+
+gspread: 구글 시트 연동
+
+google-auth-oauthlib, google-auth-httplib2: 구글 인증
+
+python-dotenv: 환경변수 관리
+
+환경변수 (.env 파일):
+
+# 연동할 구글 시트의 이름
+GOOGLE_SHEET_NAME="dm_automation_list"
+
+6. 보안 및 관리
+서비스 계정 키: service_account.json 파일은 .gitignore에 반드시 추가하여 Git 저장소에 포함되지 않도록 한다.
+
+로그인 세션 데이터: USER_DATA_DIR 경로 역시 민감 정보이므로 .gitignore에 추가한다.
+
+민감 정보: 모든 키, 경로 정보는 .env 파일을 통해 관리하며, 소스 코드에 직접 하드코딩하지 않는다.
+
+7. 알려진 제약 및 유지보수 사항
+인스타그램 UI 변경: 인스타그램 웹사이트의 구조가 변경되면 Playwright의 선택자(Selector)가 동작하지 않을 수 있다. 주기적인 코드 수정이 필요하다.
+
+계정 정지 위험: 자동화된 활동은 인스타그램 서비스 약관에 위배될 수 있다. 설정된 딜레이와 발송량 제한에도 불구하고 계정이 일시적 또는 영구적으로 정지될 위험이 항상 존재한다.
+
+구글 시트 공유: 구글 클라우드 서비스 계정 이메일 주소에 대상 구글 시트의 '편집자' 권한을 반드시 부여해야 한다.
+
+8. 샘플 구글 시트 데이터 (예시)
+
+| username      | message                  | status   | sent_timestamp         | reply         | replied_timestamp      |
+|---------------|--------------------------|----------|-----------------------|---------------|-----------------------|
+| example_user1 | 안녕하세요! 좋은 하루!   | PENDING  |                       |               |                       |
+| example_user2 | 테스트 메시지            | SENT     | 2025-07-09T15:30:00+09:00 |               |                       |
+| example_user3 | 답장 테스트              | REPLIED  | 2025-07-09T14:00:00+09:00 | 네, 감사합니다! | 2025-07-09T15:00:00+09:00 |
+| example_user4 | 차단 테스트              | FAILED   |                       | User not found|                       |
+
+
+9. 전체 실행 흐름 다이어그램 (Mermaid)
+
+```mermaid
+graph TD
+    A[구글 시트: dm_automation_list] -->|PENDING 대상 필터| B[Python 스크립트]
+    B -->|Playwright로 DM 발송| C[인스타그램 웹]
+    C -->|발송 성공/실패| D[구글 시트 상태 업데이트]
+    D -->|SENT 대상 필터| E[답장 수집 루프]
+    E -->|DM함 순회| F[인스타그램 웹]
+    F -->|답장 발견| G[구글 시트 reply/상태 업데이트]
+```
+
+10. 실패/예외 상황별 처리 예시
+
+| 예외 상황           | 발생 위치         | 처리 방법 및 시트 기록 예시                      |
+|---------------------|------------------|-------------------------------------------------|
+| 로그인 세션 만료    | Playwright 실행  | 스크립트 중단, "로그인 세션 만료. 수동 로그인 필요" 출력 |
+| User not found      | DM 발송          | status: FAILED, reply: User not found            |
+| Message blocked     | DM 발송          | status: FAILED, reply: Message blocked           |
+| Element not found   | DM 발송/답장 수집| status: FAILED, reply: Element not found         |
+| 답장 없음           | 답장 수집        | 상태 변화 없음, reply 컬럼 미기록                |
+| DM 차단/제한       | DM 발송/답장 수집| status: FAILED, reply: Blocked or Restricted     |
